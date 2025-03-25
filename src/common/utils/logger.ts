@@ -1,12 +1,16 @@
-// src/utils/logger.ts
 import winston from 'winston'
 import DailyRotateFile from 'winston-daily-rotate-file'
+
+import { Request, Response } from 'express'
+
+import os from 'os'
+import { v4 as uuidv4 } from 'uuid'
 
 import { ENVIRONMENT } from '@/common'
 
 const { APP } = ENVIRONMENT
 
-// Custom log levels and colors
+// Enhanced log levels
 const LOG_LEVELS = {
   fatal: 0,
   error: 1,
@@ -16,148 +20,178 @@ const LOG_LEVELS = {
   trace: 5,
 }
 
-const LOG_COLORS = {
-  fatal: 'magenta',
-  error: 'red',
-  warn: 'yellow',
-  info: 'green',
-  debug: 'blue',
-  trace: 'gray',
+type LogContext = {
+  who?: string // User ID or service account
+  what?: string // Action being performed
+  where?: string // System component
+  why?: string // Business reason/error code
+  requestId?: string
+  [key: string]: any
 }
 
-winston.addColors(LOG_COLORS)
+class ContextualLogger {
+  private logger: winston.Logger
+  private requestId = uuidv4()
+  private systemState: Record<string, unknown>
 
-// Base log format
-const baseFormat = winston.format.combine(
-  winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss.SSS' }),
-  winston.format.errors({ stack: true }),
-  winston.format.splat(),
-  winston.format((info) => {
-    info.service = APP.NAME
-    info.environment = APP.ENV
-    info.processId = process.pid
-    return info
-  })()
-)
+  constructor() {
+    this.systemState = this.getSystemState()
 
-// Development format
-const devFormat = winston.format.combine(
-  baseFormat,
-  winston.format.colorize({ all: true }),
-  winston.format.printf(({ timestamp, level, message, stack, ...meta }) => {
-    let log = `${timestamp} [${level}] ${message}`
-    if (stack) log += `\n${stack}`
-    if (Object.keys(meta).length > 3) {
-      // Skip service, environment, processId
-      log += `\n${JSON.stringify(meta, null, 2)}`
+    this.logger = winston.createLogger({
+      levels: LOG_LEVELS,
+      format: this.getLogFormat(),
+      transports: this.getTransports(),
+      exceptionHandlers: this.getExceptionHandlers(),
+      rejectionHandlers: this.getRejectionHandlers(),
+    })
+  }
+
+  private getSystemState() {
+    return {
+      hostname: os.hostname(),
+      uptime: process.uptime(),
+      memory: process.memoryUsage(),
+      cpu: os.cpus().length,
+      load: os.loadavg(),
     }
-    return log
-  })
-)
+  }
 
-// Production format
-const prodFormat = winston.format.combine(baseFormat, winston.format.json())
+  private getLogFormat() {
+    return winston.format.combine(
+      winston.format.timestamp({ format: 'ISO8601' }),
+      winston.format.errors({ stack: true }),
+      winston.format((info) => ({
+        ...info,
+        ...this.systemState,
+        service: APP.NAME,
+        environment: APP.ENV,
+        pid: process.pid,
+      }))(),
+      winston.format.json()
+    )
+  }
 
-// Transport configuration
-const transports: winston.transport[] = [
-  new DailyRotateFile({
-    filename: 'logs/error-%DATE%.log',
-    datePattern: 'YYYY-MM-DD',
-    zippedArchive: true,
-    maxSize: '20m',
-    maxFiles: '30d',
-    level: 'error',
-    format: prodFormat,
-  }),
-  new DailyRotateFile({
-    filename: 'logs/combined-%DATE%.log',
-    datePattern: 'YYYY-MM-DD',
-    zippedArchive: true,
-    maxSize: '20m',
-    maxFiles: '7d',
-    format: prodFormat,
-  }),
-]
+  private getTransports() {
+    return [
+      new DailyRotateFile({
+        filename: 'logs/application-%DATE%.log',
+        datePattern: 'YYYY-MM-DD',
+        zippedArchive: true,
+        maxSize: '50m',
+        maxFiles: '30d',
+      }),
+    ]
+  }
 
-if (NODE_ENV !== 'production') {
-  transports.push(
-    new winston.transports.Console({
-      level: 'trace',
-      format: devFormat,
+  private getExceptionHandlers() {
+    return [
+      new DailyRotateFile({
+        filename: 'logs/exceptions-%DATE%.log',
+        datePattern: 'YYYY-MM-DD',
+        zippedArchive: true,
+        maxSize: '20m',
+        maxFiles: '30d',
+      }),
+    ]
+  }
+
+  private getRejectionHandlers() {
+    return [
+      new DailyRotateFile({
+        filename: 'logs/rejections-%DATE%.log',
+        datePattern: 'YYYY-MM-DD',
+        zippedArchive: true,
+        maxSize: '20m',
+        maxFiles: '30d',
+      }),
+    ]
+  }
+
+  // Core logging method with context
+  private log(
+    level: keyof typeof LOG_LEVELS,
+    message: string,
+    context: LogContext = {}
+  ) {
+    const fullContext = {
+      ...context,
+      requestId: this.requestId,
+      where: context.where || 'application',
+      why: context.why || 'operational',
+      who: context.who || 'system',
+    }
+
+    this.logger.log(level, message, fullContext)
+  }
+
+  // Public methods
+  public fatal(message: string, error: Error, context: LogContext = {}) {
+    this.log('fatal', message, {
+      ...context,
+      error: this.serializeError(error),
+      systemState: this.getSystemState(),
     })
-  )
+  }
+
+  public error(message: string, error: Error, context: LogContext = {}) {
+    this.log('error', message, {
+      ...context,
+      error: this.serializeError(error),
+    })
+  }
+
+  public warn(message: string, context: LogContext = {}) {
+    this.log('warn', message, context)
+  }
+
+  public info(message: string, context: LogContext = {}) {
+    this.log('info', message, context)
+  }
+
+  public debug(message: string, context: LogContext = {}) {
+    this.log('debug', message, context)
+  }
+
+  private serializeError(error: Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+      ...(error as any).toJSON?.(),
+    }
+  }
+
+  // Express middleware for request context
+  public expressLogger() {
+    return (req: Request, res: Response, next: Function) => {
+      const requestId = uuidv4()
+      const start = Date.now()
+
+      res.locals.logContext = {
+        requestId,
+        who: req.user?.id || 'unauthenticated',
+        what: `${req.method} ${req.route?.path || req.originalUrl}`,
+        where: 'http',
+        why: 'request_processing',
+      }
+
+      res.setHeader('X-Request-ID', requestId)
+
+      res.on('finish', () => {
+        const duration = Date.now() - start
+        this.logger.info('request_completed', {
+          ...res.locals.logContext,
+          statusCode: res.statusCode,
+          duration,
+          userAgent: req.headers['user-agent'],
+          ip: req.ip,
+        })
+      })
+
+      next()
+    }
+  }
 }
 
-// Create logger instance
-const logger = winston.createLogger({
-  levels: LOG_LEVELS,
-  level: APP.ENV === 'production' ? 'info' : 'trace',
-  transports,
-  exceptionHandlers: [
-    new DailyRotateFile({
-      filename: 'logs/exceptions-%DATE%.log',
-      datePattern: 'YYYY-MM-DD',
-      zippedArchive: true,
-      maxSize: '20m',
-      maxFiles: '30d',
-      format: prodFormat,
-    }),
-  ],
-  rejectionHandlers: [
-    new DailyRotateFile({
-      filename: 'logs/rejections-%DATE%.log',
-      datePattern: 'YYYY-MM-DD',
-      zippedArchive: true,
-      maxSize: '20m',
-      maxFiles: '30d',
-      format: prodFormat,
-    }),
-  ],
-})
-
-// Add HTTP request logging middleware
-export const httpLogger = winston.createLogger({
-  levels: { http: 0 },
-  transports: [
-    new DailyRotateFile({
-      filename: 'logs/access-%DATE%.log',
-      datePattern: 'YYYY-MM-DD',
-      zippedArchive: true,
-      maxSize: '100m',
-      maxFiles: '7d',
-      format: prodFormat,
-    }),
-  ],
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.json()
-  ),
-})
-
-// Express middleware for HTTP logging
-export const expressLogger = (req: any, res: any, next: any) => {
-  const start = Date.now()
-
-  res.on('finish', () => {
-    const duration = Date.now() - start
-    httpLogger.log('http', {
-      method: req.method,
-      url: req.originalUrl,
-      status: res.statusCode,
-      duration,
-      ip: req.ip,
-      userAgent: req.headers['user-agent'],
-    })
-  })
-
-  next()
-}
-
-// Proxy console methods
-console.log = (...args) => logger.info.call(logger, ...args)
-console.error = (...args) => logger.error.call(logger, ...args)
-console.warn = (...args) => logger.warn.call(logger, ...args)
-console.info = (...args) => logger.info.call(logger, ...args)
-console.debug = (...args) => logger.debug.call(logger, ...args)
-
-export default logger
+// Singleton instance
+export const logger = new ContextualLogger()
