@@ -10,11 +10,14 @@ if (process.env.NODE_ENV === 'production') {
 
 ///////////////////////////////////////////////////////////////////////
 
+import os from 'os'
 import http from "http";
 
 import {db} from "@/db";
 import {ENVIRONMENT} from "@/common";
 
+
+const numCPUs = process.env.NODE_ENV === 'production' ? os.cpus().length : 1;
 
 
 dotenv.config();
