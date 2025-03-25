@@ -6,6 +6,7 @@ import {ENVIRONMENT} from "@/common";
 interface CustomConnectOptions extends ConnectOptions {
     maxPoolSize?: number;
     minPoolSize?: number;
+    // autoIndex: process.env.NODE_ENV !== 'production',
 }
 
 export const db = async (): Promise<void> => {
