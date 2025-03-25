@@ -64,7 +64,15 @@ if (cluster.isPrimary) {
   const app = express()
 
   // Security middleware
-  app.use(helmet())
+  app.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'"]
+      }
+    }
+  }));
   app.use(
     cors({
       origin: ['http://localhost:3000', 'http://localhost:3001'],
