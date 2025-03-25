@@ -169,7 +169,7 @@ class ContextualLogger {
 
       res.locals.logContext = {
         requestId,
-        who: req.user?.id || 'unauthenticated',
+        who: req.user?._id || 'unauthenticated',
         what: `${req.method} ${req.route?.path || req.originalUrl}`,
         where: 'http',
         why: 'request_processing',
