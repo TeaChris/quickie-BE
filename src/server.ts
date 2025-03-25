@@ -77,7 +77,7 @@ if (cluster.isPrimary) {
     });
 
     const flashSaleLimiter = rateLimit({
-        windowMs: 5 * 60 * 1000, // 5 minutes
+        windowMs: 2 * 60 * 1000, // 5 minutes
         max: 10, // stricter limit for flash sales
         message: 'Too many flash sale requests, please try again later.'
     });
