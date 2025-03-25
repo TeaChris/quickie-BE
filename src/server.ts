@@ -13,9 +13,11 @@ if (process.env.NODE_ENV === 'production') {
 import os from 'os'
 import http from "http";
 
+import cors from 'cors'
 import helmet from 'helmet';
 import express from 'express';
 import cluster from 'cluster';
+import rateLimit from 'express-rate-limit';
 
 import {db} from "@/db";
 import {ENVIRONMENT} from "@/common";
@@ -61,8 +63,9 @@ if (cluster.isPrimary) {
     // Security middleware
     app.use(helmet());
     app.use(cors({
-        origin: ENVIRONMENT.APP.CORS_ORIGINS,
-        methods: ['GET', 'POST', 'PUT']
+        origin: ['http://localhost:3000', 'http://localhost:3001'],
+        methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+        credentials: true,
     }));
 
     // Rate limiting (different for flash sale endpoints)
