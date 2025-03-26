@@ -193,5 +193,10 @@ class ContextualLogger {
   }
 }
 
-// Singleton instance
 export const logger = new ContextualLogger()
+
+export const stream = {
+  write: (message: string) => {
+    logger.info(message.trim())
+  },
+}
